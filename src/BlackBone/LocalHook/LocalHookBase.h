@@ -2,7 +2,7 @@
 
 #include "../Config.h"
 #include "../Include/Winheaders.h"
-#include "../Asm/AsmHelper.h"
+#include "../Asm/AsmFactory.h"
 #include "../Asm/LDasm.h"
 #include "../Include/Macro.h"
 
@@ -16,9 +16,9 @@ namespace CallOrder
 {
 enum e
 {
-    HookFirst,
-    HookLast,
-    NoOriginal,
+    HookFirst,      // Hook called before original function
+    HookLast,       // Hook called after original function
+    NoOriginal,     // Original function doesn't get called
 };
 }
 
@@ -40,20 +40,27 @@ namespace ReturnMethod
 {
     enum e
     {
-        UseNew,
-        UseOriginal
+        UseNew,         // Return value returned by hook
+        UseOriginal     // Return original function value
     };
 }
 
 class DetourBase
 {
-    typedef std::unordered_map<DWORD, int> mapIdx;
+    using mapIdx = std::unordered_map<DWORD, int>;
 
 public:
     BLACKBONE_API DetourBase();
     BLACKBONE_API ~DetourBase();
 
 protected:
+
+    /// <summary>
+    /// Allocate detour buffer as close to target as possible
+    /// </summary>
+    /// <param name="nearest">Target address</param>
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool AllocateBuffer( uint8_t* nearest );
 
     /// <summary>
     /// Temporarily disable hook
@@ -104,6 +111,7 @@ protected:
     size_t   _origSize = 0;             // Original code size
     uint8_t* _buf = nullptr;            // Trampoline buffer
     uint8_t* _origCode = nullptr;       // Original function bytes
+    uint8_t* _origThunk = nullptr;      // Original bytes adjusted for relocation
     uint8_t* _newCode = nullptr;        // Trampoline bytes
     
     HookType::e _type = HookType::Inline;

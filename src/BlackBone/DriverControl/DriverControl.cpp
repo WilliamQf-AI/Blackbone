@@ -2,9 +2,8 @@
 #include "../Misc/Utils.h"
 #include "../Misc/Trace.hpp"
 #include "../Misc/DynImport.h"
-#include "../Include/Macro.h"
 
-#include "VersionHelpers.h"
+#include <3rd_party/VersionApi.h>
 
 namespace blackbone
 {
@@ -13,11 +12,7 @@ namespace blackbone
 
 DriverControl::DriverControl()
 {
-    DynImport::load( "NtLoadDriver", GetModuleHandleW( L"ntdll.dll" ) );
-    DynImport::load( "NtUnloadDriver", GetModuleHandleW( L"ntdll.dll" ) );
-    DynImport::load( "RtlDosPathNameToNtPathName_U", GetModuleHandleW( L"ntdll.dll" ) );   
 }
-
 
 DriverControl::~DriverControl()
 {
@@ -38,14 +33,18 @@ DriverControl& DriverControl::Instance()
 NTSTATUS DriverControl::EnsureLoaded( const std::wstring& path /*= L"" */ )
 {
     // Already open
-    if (_hDriver != INVALID_HANDLE_VALUE)
+    if (_hDriver)
         return STATUS_SUCCESS;
 
     // Try to open handle to existing driver
-    _hDriver = CreateFile( BLACKBONE_DEVICE_FILE, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                           NULL, OPEN_EXISTING, 0, NULL );
+    _hDriver = CreateFileW( 
+        BLACKBONE_DEVICE_FILE, 
+        GENERIC_READ | GENERIC_WRITE, 
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL, OPEN_EXISTING, 0, NULL
+        );
 
-    if (_hDriver != INVALID_HANDLE_VALUE)
+    if (_hDriver)
         return _loadStatus = STATUS_SUCCESS;
 
     // Start new instance
@@ -59,8 +58,6 @@ NTSTATUS DriverControl::EnsureLoaded( const std::wstring& path /*= L"" */ )
 /// <returns>Status code</returns>
 NTSTATUS DriverControl::Reload( std::wstring path /*= L"" */ )
 {
-    NTSTATUS status = STATUS_SUCCESS;
-
     Unload();
 
     // Use default path
@@ -69,36 +66,41 @@ NTSTATUS DriverControl::Reload( std::wstring path /*= L"" */ )
         const wchar_t* filename = nullptr;
 
         if (IsWindows10OrGreater())
-            filename = L"BlackBoneDrv10.sys";
+            filename = BLACKBONE_FILE_NAME_10;
         else if (IsWindows8Point1OrGreater())
-            filename = L"BlackBoneDrv81.sys";
+            filename = BLACKBONE_FILE_NAME_81;
         else if (IsWindows8OrGreater())
-            filename = L"BlackBoneDrv8.sys";
+            filename = BLACKBONE_FILE_NAME_8;
         else if (IsWindows7OrGreater())
-            filename = L"BlackBoneDrv7.sys";
+            filename = BLACKBONE_FILE_NAME_7;
         else
-            filename = L"BlackBoneDrv.sys";
+            filename = BLACKBONE_FILE_NAME;
 
         path = Utils::GetExeDirectory() + L"\\" + filename;
     }
 
-    status = _loadStatus = LoadDriver( DRIVER_SVC_NAME, path );
-    if (!NT_SUCCESS( status ))
+    _loadStatus = LoadDriver( DRIVER_SVC_NAME, path );
+    if (!NT_SUCCESS( _loadStatus ))
     {
-        BLACBONE_TRACE( L"Failed to load driver %ls. Status 0x%X", path.c_str(), status );
-        return LastNtStatus( status );
+        BLACKBONE_TRACE( L"Failed to load driver %ls. Status 0x%X", path.c_str(), _loadStatus );
+        return _loadStatus;
     }
 
-    _hDriver = CreateFile( BLACKBONE_DEVICE_FILE, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                           NULL, OPEN_EXISTING, 0, NULL );
+    _hDriver = CreateFileW( 
+        BLACKBONE_DEVICE_FILE, 
+        GENERIC_READ | GENERIC_WRITE, 
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL, OPEN_EXISTING, 0, NULL
+        );
 
-    if (_hDriver == INVALID_HANDLE_VALUE)
+    if (!_hDriver)
     {
-        BLACBONE_TRACE( L"Failed to open driver handle. Status 0x%X", status );
-        return LastNtStatus();
+        _loadStatus = LastNtStatus();
+        BLACKBONE_TRACE( L"Failed to open driver handle. Status 0x%X", _loadStatus );
+        return _loadStatus;
     }
 
-    return STATUS_SUCCESS;
+    return _loadStatus;
 }
 
 /// <summary>
@@ -107,12 +109,7 @@ NTSTATUS DriverControl::Reload( std::wstring path /*= L"" */ )
 /// <returns>Status code</returns>
 NTSTATUS DriverControl::Unload()
 {
-    if (_hDriver != INVALID_HANDLE_VALUE)
-    {
-        CloseHandle( _hDriver );
-        _hDriver = INVALID_HANDLE_VALUE;
-    }
-
+    _hDriver.reset();
     return UnloadDriver( DRIVER_SVC_NAME );
 }
 
@@ -273,12 +270,19 @@ NTSTATUS DriverControl::DisableDEP( DWORD pid )
 /// Change process protection flag
 /// </summary>
 /// <param name="pid">Target PID</param>
-/// <param name="enable">true to enable protection, false to disable</param>
+/// <param name="protection">Process protection policy</param>
+/// <param name="dynamicCode">Prohibit dynamic code</param>
+/// <param name="binarySignature">Prohibit loading non-microsoft dlls</param>
 /// <returns>Status code</returns>
-NTSTATUS DriverControl::ProtectProcess( DWORD pid, bool enable )
+NTSTATUS DriverControl::ProtectProcess(
+    DWORD pid,
+    PolicyOpt protection,
+    PolicyOpt dynamicCode /*= Policy_Keep*/,
+    PolicyOpt binarySignature /*= Policy_Keep*/
+    )
 {
     DWORD bytes = 0;
-    SET_PROC_PROTECTION setProt = { pid, enable };
+    SET_PROC_PROTECTION setProt = { pid, protection, dynamicCode, binarySignature };
 
     // Not loaded
     if (_hDriver == INVALID_HANDLE_VALUE)
@@ -343,7 +347,11 @@ NTSTATUS DriverControl::AllocateMem( DWORD pid, ptr_t& base, ptr_t& size, DWORD 
     if (_hDriver == INVALID_HANDLE_VALUE)
         return STATUS_DEVICE_DOES_NOT_EXIST;
 
-    if (!DeviceIoControl( _hDriver, IOCTL_BLACKBONE_ALLOCATE_FREE_MEMORY, &allocMem, sizeof( allocMem ), &result, sizeof( result ), &bytes, NULL ))
+    if (!DeviceIoControl( 
+        _hDriver, IOCTL_BLACKBONE_ALLOCATE_FREE_MEMORY, 
+        &allocMem, sizeof( allocMem ), 
+        &result, sizeof( result ), &bytes, NULL 
+        ))
     {
         size = base = 0;
         return LastNtStatus();
@@ -380,8 +388,14 @@ NTSTATUS DriverControl::FreeMem( DWORD pid, ptr_t base, ptr_t size, DWORD type )
     if (_hDriver == INVALID_HANDLE_VALUE)
         return STATUS_DEVICE_DOES_NOT_EXIST;
 
-    if (!DeviceIoControl( _hDriver, IOCTL_BLACKBONE_ALLOCATE_FREE_MEMORY, &freeMem, sizeof( freeMem ), &result, sizeof( result ), &bytes, NULL ))
+    if (!DeviceIoControl(
+        _hDriver, IOCTL_BLACKBONE_ALLOCATE_FREE_MEMORY,
+        &freeMem, sizeof( freeMem ),
+        &result, sizeof( result ), &bytes, NULL
+        ))
+    {
         return LastNtStatus();
+    }
 
     return STATUS_SUCCESS;
 }
@@ -539,9 +553,9 @@ NTSTATUS DriverControl::MmapDll(
     UNICODE_STRING ustr = { 0 };
 
     // Convert path to native format
-    GET_IMPORT( RtlDosPathNameToNtPathName_U )(path.c_str(), &ustr, NULL, NULL);
+    SAFE_NATIVE_CALL( RtlDosPathNameToNtPathName_U, path.c_str(), &ustr, nullptr, nullptr );
     wcscpy_s( data.FullDllPath, ustr.Buffer );
-    GET_IMPORT( RtlFreeUnicodeString )(&ustr);
+    SAFE_CALL( RtlFreeUnicodeString, &ustr );
 
     wcscpy_s( data.initArg, initArg.c_str() );
 
@@ -613,7 +627,7 @@ NTSTATUS DriverControl::MmapDll(
 NTSTATUS DriverControl::MMapDriver( const std::wstring& path )
 {
     DWORD bytes = 0;
-    MMAP_DRIVER data = { 0 };
+    MMAP_DRIVER data = { { 0 } };
     UNICODE_STRING ustr = { 0 };
 
     // Not loaded
@@ -621,9 +635,9 @@ NTSTATUS DriverControl::MMapDriver( const std::wstring& path )
         return STATUS_DEVICE_DOES_NOT_EXIST;
 
     // Convert path to native format
-    GET_IMPORT( RtlDosPathNameToNtPathName_U )(path.c_str(), &ustr, NULL, NULL);
+    SAFE_NATIVE_CALL( RtlDosPathNameToNtPathName_U, path.c_str(), &ustr, nullptr, nullptr);
     wcscpy_s( data.FullPath, ustr.Buffer );
-    GET_IMPORT( RtlFreeUnicodeString )(&ustr);
+    SAFE_CALL( RtlFreeUnicodeString, &ustr);
 
     if (!DeviceIoControl( _hDriver, IOCTL_BLACKBONE_MAP_DRIVER, &data, sizeof( data ), nullptr, 0, &bytes, NULL ))
         return LastNtStatus();
@@ -678,6 +692,56 @@ NTSTATUS DriverControl::UnlinkHandleTable( DWORD pid )
     return STATUS_SUCCESS;
 }
 
+/// <summary>
+///  Enumerate committed, accessible, non-guarded memory regions
+/// </summary>
+/// <param name="pid">Target process ID</param>
+/// <param name="regions">Found regions</param>
+/// <returns>Status code</returns>
+NTSTATUS DriverControl::EnumMemoryRegions( DWORD pid, std::vector<MEMORY_BASIC_INFORMATION64>& regions )
+{
+    // Not loaded
+    if (_hDriver == INVALID_HANDLE_VALUE)
+    {
+        return STATUS_DEVICE_DOES_NOT_EXIST;
+    }
+
+    DWORD bytes = 0;
+    ENUM_REGIONS data = { 0 };
+    DWORD size = sizeof( ENUM_REGIONS_RESULT );
+    auto result = reinterpret_cast<PENUM_REGIONS_RESULT>(malloc( size ));
+
+    data.pid = pid;
+    result->count = 0;
+
+    DeviceIoControl( _hDriver, IOCTL_BLACKBONE_ENUM_REGIONS, &data, sizeof( data ), result, size, &bytes, NULL );
+
+    result->count += 100;
+    size = static_cast<DWORD>(result->count * sizeof( result->regions[0] ) + sizeof( result->count ));
+    result = reinterpret_cast<PENUM_REGIONS_RESULT>(realloc( result, size ));
+
+    if (!DeviceIoControl( _hDriver, IOCTL_BLACKBONE_ENUM_REGIONS, &data, sizeof( data ), result, size, &bytes, NULL ))
+    {
+        free( result );
+        return LastNtStatus();
+    }
+
+    regions.resize( static_cast<size_t>(result->count) );
+    for (uint32_t i = 0; i < result->count; i++)
+    {
+        regions[i].AllocationBase = result->regions[i].AllocationBase;
+        regions[i].AllocationProtect = result->regions[i].AllocationProtect;
+        regions[i].BaseAddress = result->regions[i].BaseAddress;
+        regions[i].Protect = result->regions[i].Protect;
+        regions[i].RegionSize = result->regions[i].RegionSize;
+        regions[i].State = result->regions[i].State;
+        regions[i].Type = result->regions[i].Type;
+    }
+    
+    free( result );
+    return STATUS_SUCCESS;
+}
+
 
 
 
@@ -696,9 +760,9 @@ NTSTATUS DriverControl::LoadDriver( const std::wstring& svcName, const std::wstr
         return LastNtStatus();
 
     std::wstring regPath = L"\\registry\\machine\\SYSTEM\\CurrentControlSet\\Services\\" + svcName;
-    GET_IMPORT( RtlInitUnicodeString )(&Ustr, regPath.c_str());
+    SAFE_CALL( RtlInitUnicodeString, &Ustr, regPath.c_str() );
 
-    return GET_IMPORT( NtLoadDriver )(&Ustr);
+    return SAFE_NATIVE_CALL( NtLoadDriver, &Ustr );
 }
 
 
@@ -709,13 +773,16 @@ NTSTATUS DriverControl::LoadDriver( const std::wstring& svcName, const std::wstr
 /// <returns>Status</returns>
 NTSTATUS DriverControl::UnloadDriver( const std::wstring& svcName )
 {
-    UNICODE_STRING Ustr;
+    UNICODE_STRING Ustr = { 0 };
 
     std::wstring regPath = L"\\registry\\machine\\SYSTEM\\CurrentControlSet\\Services\\" + svcName;
-    GET_IMPORT( RtlInitUnicodeString )(&Ustr, regPath.c_str());
+    SAFE_CALL( RtlInitUnicodeString, &Ustr, regPath.c_str() );
 
     // Remove previously loaded instance, if any
-    return GET_IMPORT( NtUnloadDriver )(&Ustr);
+    NTSTATUS status = SAFE_NATIVE_CALL( NtUnloadDriver, &Ustr );
+    SHDeleteKeyW( HKEY_LOCAL_MACHINE, (L"SYSTEM\\CurrentControlSet\\Services\\" + svcName).c_str() );
+
+    return status;
 }
 
 /// <summary>
@@ -726,46 +793,31 @@ NTSTATUS DriverControl::UnloadDriver( const std::wstring& svcName )
 /// <returns>Status code</returns>
 LSTATUS DriverControl::PrepareDriverRegEntry( const std::wstring& svcName, const std::wstring& path )
 {
-    HKEY key1, key2;
-    BYTE dwType = 1;
+    RegHandle svcRoot, svcKey;
+    DWORD dwType = 1;
     LSTATUS status = 0;
     WCHAR wszLocalPath[MAX_PATH] = { 0 };
 
     swprintf_s( wszLocalPath, ARRAYSIZE( wszLocalPath ), L"\\??\\%s", path.c_str() );
 
-    status = RegOpenKeyW( HKEY_LOCAL_MACHINE, L"system\\CurrentControlSet\\Services", &key1 );
+    status = RegOpenKeyW( HKEY_LOCAL_MACHINE, L"system\\CurrentControlSet\\Services", &svcRoot );
     if (status)
         return status;
 
-    status = RegCreateKeyW( key1, svcName.c_str(), &key2 );
+    status = RegCreateKeyW( svcRoot, svcName.c_str(), &svcKey );
     if (status)
-    {
-        RegCloseKey( key1 );
         return status;
-    }
 
-    status = RegSetValueExW( key2, L"ImagePath", 0, REG_SZ, reinterpret_cast<const BYTE*>(wszLocalPath),
-                             static_cast<DWORD>(sizeof( WCHAR )* (wcslen( wszLocalPath ) + 1)) );
+    status = RegSetValueExW(
+        svcKey, L"ImagePath", 0, REG_SZ, 
+        reinterpret_cast<const BYTE*>(wszLocalPath),
+        static_cast<DWORD>(sizeof( WCHAR )* (wcslen( wszLocalPath ) + 1))
+        );
+
     if (status)
-    {
-        RegCloseKey( key2 );
-        RegCloseKey( key1 );
         return status;
-    }
 
-    status = RegSetValueExW( key2, L"Type", 0, REG_DWORD, &dwType, sizeof( DWORD ) );
-    if (status)
-    {
-        RegCloseKey( key2 );
-        RegCloseKey( key1 );
-        return status;
-    }
-
-    RegCloseKey( key2 );
-    RegCloseKey( key1 );
-
-    return status;
+    return RegSetValueExW( svcKey, L"Type", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&dwType), sizeof( dwType ) );
 }
-
 
 }

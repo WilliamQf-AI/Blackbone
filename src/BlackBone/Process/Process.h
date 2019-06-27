@@ -6,10 +6,13 @@
 #include "Threads/Threads.h"
 #include "RPC/RemoteExec.h"
 #include "RPC/RemoteHook.h"
+#include "RPC/RemoteLocalHook.h"
 #include "../ManualMap/Native/NtLoader.h"
 #include "../ManualMap/MMap.h"
 
 #include "../Include/NativeStructures.h"
+#include "../Include/CallResult.h"
+#include "../Misc/InitOnce.h"
 
 #include <string>
 #include <list>
@@ -17,6 +20,9 @@
 namespace blackbone
 {
 
+/// <summary>
+/// Process thread information
+/// </summary>
 struct ThreadInfo
 {
     uint32_t tid = 0;
@@ -24,6 +30,9 @@ struct ThreadInfo
     bool mainThread = false;
 };
 
+/// <summary>
+/// Process information
+/// </summary>
 struct ProcessInfo
 {
     uint32_t pid = 0;
@@ -36,6 +45,31 @@ struct ProcessInfo
     }
 };
 
+/// <summary>
+/// Section object information
+/// </summary>
+struct SectionInfo
+{
+    ptr_t size = 0;
+    uint32_t attrib = 0;
+};
+
+/// <summary>
+/// Process handle information
+/// </summary>
+struct HandleInfo
+{
+    HANDLE handle = nullptr;
+    uint32_t access = 0;
+    uint32_t flags = 0;
+    ptr_t pObject = 0;
+
+    std::wstring typeName;
+    std::wstring name;
+
+    // Object-specific info
+    std::shared_ptr<SectionInfo> section;
+};
 
 #define DEFAULT_ACCESS_P  PROCESS_QUERY_INFORMATION | \
                           PROCESS_VM_READ           | \
@@ -44,6 +78,7 @@ struct ProcessInfo
                           PROCESS_CREATE_THREAD     | \
                           PROCESS_SET_QUOTA         | \
                           PROCESS_TERMINATE         | \
+                          PROCESS_SUSPEND_RESUME    | \
                           PROCESS_DUP_HANDLE
 class Process
 {
@@ -58,6 +93,14 @@ public:
     /// <param name="access">Access mask</param>
     /// <returns>Status code</returns>
     BLACKBONE_API NTSTATUS Attach( DWORD pid, DWORD access = DEFAULT_ACCESS_P );
+
+    /// <summary>
+    /// Attach to existing process
+    /// </summary>
+    /// <param name="name">Process name</param>
+    /// <param name="access">Access mask</param>
+    /// <returns>Status code</returns>
+    BLACKBONE_API NTSTATUS Attach( const wchar_t* name, DWORD access = DEFAULT_ACCESS_P );
 
     /// <summary>
     /// Attach to existing process
@@ -98,6 +141,18 @@ public:
     BLACKBONE_API NTSTATUS EnsureInit();
 
     /// <summary>
+    /// Suspend process
+    /// </summary>
+    /// <returns>Status code</returns>
+    BLACKBONE_API NTSTATUS Suspend();
+
+    /// <summary>
+    /// Resume process
+    /// </summary>
+    /// <returns>Status code</returns>
+    BLACKBONE_API NTSTATUS Resume();
+
+    /// <summary>
     /// Get process ID
     /// </summary>
     /// <returns>Process ID</returns>
@@ -117,11 +172,17 @@ public:
     BLACKBONE_API NTSTATUS Terminate( uint32_t code = 0 );
 
     /// <summary>
+    /// Enumerate all open handles
+    /// </summary>
+    /// <returns>Found handles or status code</returns>
+    BLACKBONE_API call_result_t<std::vector<HandleInfo>> EnumHandles();
+
+    /// <summary>
     /// Search for process by executable name
     /// </summary>
     /// <param name="name">Process name. If empty - function will retrieve all existing processes</param>
     /// <param name="found">Found processses</param>
-    BLACKBONE_API static void EnumByName( const std::wstring& name, std::vector<DWORD>& found );
+    BLACKBONE_API static std::vector<DWORD> EnumByName( const std::wstring& name );
 
     /// <summary>
     /// Search for process by executable name or by process ID
@@ -131,44 +192,42 @@ public:
     /// <param name="found">Found processses</param>
     /// <param name="includeThreads">If set to true, function will retrieve info ablout process threads</param>
     /// <returns>Status code</returns>
-    BLACKBONE_API static NTSTATUS EnumByNameOrPID( 
+    BLACKBONE_API static call_result_t<std::vector<ProcessInfo>> EnumByNameOrPID(
         uint32_t pid,
         const std::wstring& name, 
-        std::vector<ProcessInfo>& found, 
         bool includeThreads = false
         );
 
     //
     // Subroutines
     //
-    BLACKBONE_API inline ProcessCore&    core()      { return _core; }       // Core routines and native 
-    BLACKBONE_API inline ProcessMemory&  memory()    { return _memory; }     // Memory manipulations
-    BLACKBONE_API inline ProcessModules& modules()   { return _modules; }    // Module management
-    BLACKBONE_API inline ProcessThreads& threads()   { return _threads; }    // Threads
-    BLACKBONE_API inline RemoteHook&     hooks()     { return _hooks; }      // Hooking code remotely
-    BLACKBONE_API inline RemoteExec&     remote()    { return _remote; }     // Remote code execution
-    BLACKBONE_API inline MMap&           mmap()      { return _mmap; }       // Manual module mapping
-    BLACKBONE_API inline NtLdr&          nativeLdr() { return _nativeLdr; }  // Native loader routines
+    BLACKBONE_API ProcessCore&     core()       { return _core;       }  // Core routines and native 
+    BLACKBONE_API ProcessMemory&   memory()     { return _memory;     }  // Memory manipulations
+    BLACKBONE_API ProcessModules&  modules()    { return _modules;    }  // Module management
+    BLACKBONE_API ProcessThreads&  threads()    { return _threads;    }  // Threads
+    BLACKBONE_API RemoteHook&      hooks()      { return _hooks;      }  // Hooking code remotely
+    BLACKBONE_API RemoteLocalHook& localHooks() { return _localHooks; }  // Hooking code locally
+    BLACKBONE_API RemoteExec&      remote()     { return _remote;     }  // Remote code execution
+    BLACKBONE_API MMap&            mmap()       { return _mmap;       }  // Manual module mapping
+    BLACKBONE_API NtLdr&           nativeLdr()  { return _nativeLdr;  }  // Native loader routines
+
+    // Sugar
+    BLACKBONE_API const Wow64Barrier& barrier() const { return _core._native->GetWow64Barrier(); }
 
 private:
-    /// <summary>
-    /// Grant current process arbitrary privilege
-    /// </summary>
-    /// <param name="name">Privilege name</param>
-    /// <returns>Status</returns>
-    NTSTATUS GrantPriviledge( const std::basic_string<TCHAR>& name );
-
     Process(const Process&) = delete;
     Process& operator =(const Process&) = delete;
+
 private:
-    ProcessCore    _core;       // Core routines and native subsystem
-    ProcessModules _modules;    // Module management
-    ProcessMemory  _memory;     // Memory manipulations
-    ProcessThreads _threads;    // Threads
-    RemoteHook     _hooks;      // Hooking code remotely
-    RemoteExec     _remote;     // Remote code execution
-    MMap           _mmap;       // Manual module mapping
-    NtLdr          _nativeLdr;  // Native loader routines
+    ProcessCore     _core;          // Core routines and native subsystem
+    ProcessModules  _modules;       // Module management
+    ProcessMemory   _memory;        // Memory manipulations
+    ProcessThreads  _threads;       // Threads
+    RemoteHook      _hooks;         // Hooking code remotely
+    RemoteLocalHook _localHooks;    // In-process remote hooks
+    RemoteExec      _remote;        // Remote code execution
+    MMap            _mmap;          // Manual module mapping
+    NtLdr           _nativeLdr;     // Native loader routines
 };
 
 }

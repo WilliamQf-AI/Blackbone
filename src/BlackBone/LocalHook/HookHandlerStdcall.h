@@ -6,18 +6,18 @@ namespace blackbone
 template<typename R, typename... Args, class C>
 struct HookHandler<R( __stdcall* )(Args...), C> : public DetourBase
 {
-    typedef typename std::conditional<std::is_same<R, void>::value, int, R>::type ReturnType;
+    using ReturnType = std::conditional_t<std::is_same_v<R, void>, int, R>;
 
-    typedef R( __stdcall *type )(Args...);
-    typedef R( __stdcall *hktype )(Args&...);
-    typedef R( C::*hktypeC )(Args&...);
+    using type    = R( __stdcall* )(Args...);
+    using hktype  = R( __stdcall* )(Args&...);
+    using hktypeC = R( C::* )(Args&...);
 
     //
     // Workaround for void return type
     //
-    typedef ReturnType( __stdcall *typeR )(Args...);
-    typedef ReturnType( __stdcall *hktypeR )(Args&...);
-    typedef ReturnType( C::*hktypeCR )(Args&...);
+    using typeR    = ReturnType( __stdcall* )(Args...);
+    using hktypeR  = ReturnType( __stdcall* )(Args&...);
+    using hktypeCR = ReturnType( C::* )(Args&...);
 
     static __declspec(noinline) ReturnType __stdcall Handler( Args... args )
     {
@@ -46,22 +46,23 @@ struct HookHandler<R( __stdcall* )(Args...), C> : public DetourBase
             val_original = val_new = CallCallback( std::forward<Args>( args )... );
         }
 
-        EnableHook();
+        if (this->_hooked)
+            EnableHook();
 
         return (_retType == ReturnMethod::UseOriginal ? val_original : val_new);
     }
 
     inline ReturnType CallOriginal( Args&&... args )
     {
-        return (reinterpret_cast<type>(_callOriginal))(args...);
+        return (reinterpret_cast<typeR>(_callOriginal))(args...);
     }
 
     inline ReturnType CallCallback( Args&&... args )
     {
         if (_callbackClass != nullptr)
-            return ((C*)_callbackClass->*brutal_cast<hktypeC>(_callback))(args...);
+            return ((C*)_callbackClass->*brutal_cast<hktypeCR>(_callback))(args...);
         else
-            return (reinterpret_cast<hktype>(_callback))(args...);
+            return (reinterpret_cast<hktypeR>(_callback))(args...);
     }
 };
 

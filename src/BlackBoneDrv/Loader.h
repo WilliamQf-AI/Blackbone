@@ -69,6 +69,7 @@ typedef struct _USER_CONTEXT
         ULONG retVal32;             // Function return value
     };
 
+    //UCHAR tlsBuf[0x100];
 } USER_CONTEXT, *PUSER_CONTEXT;
 
 /// <summary>
@@ -86,6 +87,8 @@ typedef struct _MMAP_CONTEXT
     PKEVENT pSync;          // APC sync object
     PVOID pSetEvent;        // ZwSetEvent address
     PVOID pLoadImage;       // LdrLoadDll address
+    BOOLEAN tlsInitialized; // Static TLS was initialized
+    BOOLEAN noThreads;      // No threads should be created
 } MMAP_CONTEXT, *PMMAP_CONTEXT;
 
 /// <summary>
@@ -195,10 +198,10 @@ NTSTATUS BBResolveImagePath(
 /// <summary>
 /// Find first thread of the target process
 /// </summary>
-/// <param name="pid">Target PID.</param>
+/// <param name="pProcess">Target process.</param>
 /// <param name="ppThread">Found thread. Thread object reference count is increased by 1</param>
 /// <returns>Status code</returns>
-NTSTATUS BBLookupProcessThread( IN HANDLE pid, OUT PETHREAD* ppThread );
+NTSTATUS BBLookupProcessThread( IN PEPROCESS pProcess, OUT PETHREAD* ppThread );
 
 /// <summary>
 /// Create new thread in the target process

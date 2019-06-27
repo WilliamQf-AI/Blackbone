@@ -14,6 +14,11 @@ PatternSearch::PatternSearch( const std::vector<uint8_t>& pattern )
 {
 }
 
+PatternSearch::PatternSearch( const std::initializer_list<uint8_t>&& pattern )
+    : _pattern( pattern )
+{
+}
+
 PatternSearch::PatternSearch( const std::string& pattern )
     : _pattern( pattern.begin(), pattern.end() )
 {
@@ -29,10 +34,6 @@ PatternSearch::PatternSearch( const uint8_t* pattern, size_t len /*= 0*/ )
 { 
 }
 
-PatternSearch::~PatternSearch()
-{
-}
-
 /// <summary>
 /// Default pattern matching with wildcards.
 /// std::search is approximately 2x faster than naive approach.
@@ -43,16 +44,25 @@ PatternSearch::~PatternSearch()
 /// <param name="out">Found results</param>
 /// <param name="value_offset">Value that will be added to resulting addresses</param>
 /// <returns>Number of found addresses</returns>
-size_t PatternSearch::Search( uint8_t wildcard, void* scanStart, size_t scanSize, std::vector<ptr_t>& out, ptr_t value_offset /*= 0*/ )
+size_t PatternSearch::Search( 
+    uint8_t wildcard, 
+    void* scanStart, 
+    size_t scanSize, 
+    std::vector<ptr_t>& out, 
+    ptr_t value_offset /*= 0*/ 
+    ) const
 {
     const uint8_t* cstart = (const uint8_t*)scanStart;
     const uint8_t* cend   = cstart + scanSize;
 
+    auto comparer = [&wildcard]( uint8_t val1, uint8_t val2 )
+    {
+        return (val1 == val2 || val2 == wildcard);
+    };
+
     for (;;)
     {
-        const uint8_t* res = std::search( cstart, cend, _pattern.begin(), _pattern.end(),
-                                          [&wildcard]( uint8_t val1, uint8_t val2 ){ return (val1 == val2 || val2 == wildcard); } );
-
+        const uint8_t* res = std::search( cstart, cend, _pattern.begin(), _pattern.end(), comparer );
         if (res >= cend)
             break;
 
@@ -76,15 +86,20 @@ size_t PatternSearch::Search( uint8_t wildcard, void* scanStart, size_t scanSize
 /// <param name="out">Found results</param>
 /// <param name="value_offset">Value that will be added to resulting addresses</param>
 /// <returns>Number of found addresses</returns>
-size_t PatternSearch::Search( void* scanStart, size_t scanSize, std::vector<ptr_t>& out, ptr_t value_offset /*= 0*/ )
+size_t PatternSearch::Search( 
+    void* scanStart,
+    size_t scanSize, 
+    std::vector<ptr_t>& out,
+    ptr_t value_offset /*= 0*/ 
+    ) const
 {
     size_t bad_char_skip[UCHAR_MAX + 1];
 
     const uint8_t* haystack = reinterpret_cast<const uint8_t*>(scanStart);
     const uint8_t* needle   = &_pattern[0];
-    intptr_t       nlen     = _pattern.size();
-    intptr_t       scan     = 0;
-    intptr_t       last     = nlen - 1;
+    uintptr_t       nlen     = _pattern.size();
+    uintptr_t       scan     = 0;
+    uintptr_t       last     = nlen - 1;
 
     //
     // Preprocess
@@ -108,6 +123,8 @@ size_t PatternSearch::Search( void* scanStart, size_t scanSize, std::vector<ptr_
                     out.emplace_back( REBASE( haystack, scanStart, value_offset ) );
                 else
                     out.emplace_back( reinterpret_cast<ptr_t>(haystack) );
+
+                break;
             }
         }
 
@@ -127,12 +144,18 @@ size_t PatternSearch::Search( void* scanStart, size_t scanSize, std::vector<ptr_
 /// <param name="scanSize">Size of region to scan</param>
 /// <param name="out">Found results</param>
 /// <returns>Number of found addresses</returns>
-size_t PatternSearch::SearchRemote( Process& remote, uint8_t wildcard, ptr_t scanStart, size_t scanSize, std::vector<ptr_t>& out )
+size_t PatternSearch::SearchRemote( 
+    Process& remote, 
+    uint8_t wildcard, 
+    ptr_t scanStart, 
+    size_t scanSize, 
+    std::vector<ptr_t>& out 
+    ) const
 {
     uint8_t *pBuffer = reinterpret_cast<uint8_t*>(VirtualAlloc( NULL, scanSize, MEM_COMMIT, PAGE_READWRITE ));
 
     if (pBuffer && remote.memory().Read( scanStart, scanSize, pBuffer ) == STATUS_SUCCESS)
-        Search( wildcard, pBuffer, scanSize, out );
+        Search( wildcard, pBuffer, scanSize, out, scanStart );
 
     if (pBuffer)
         VirtualFree( pBuffer, 0, MEM_RELEASE );
@@ -148,7 +171,12 @@ size_t PatternSearch::SearchRemote( Process& remote, uint8_t wildcard, ptr_t sca
 /// <param name="scanSize">Size of region to scan</param>
 /// <param name="out">Found results</param>
 /// <returns>Number of found addresses</returns>
-size_t PatternSearch::SearchRemote( Process& remote, ptr_t scanStart, size_t scanSize, std::vector<ptr_t>& out )
+size_t PatternSearch::SearchRemote( 
+    Process& remote, 
+    ptr_t scanStart, 
+    size_t scanSize, 
+    std::vector<ptr_t>& out 
+    ) const
 {
     uint8_t *pBuffer = reinterpret_cast<uint8_t*>(VirtualAlloc( NULL, scanSize, MEM_COMMIT, PAGE_READWRITE ));
 
@@ -169,7 +197,12 @@ size_t PatternSearch::SearchRemote( Process& remote, ptr_t scanStart, size_t sca
 /// <param name="wildcard">Pattern wildcard</param>
 /// <param name="out">Found results</param>
 /// <returns>Number of found addresses</returns>
-size_t PatternSearch::SearchRemoteWhole( Process& remote, bool useWildcard, uint8_t wildcard, std::vector<ptr_t>& out )
+size_t PatternSearch::SearchRemoteWhole( 
+    Process& remote, 
+    bool useWildcard, 
+    uint8_t wildcard, 
+    std::vector<ptr_t>& out 
+    ) const
 {
     MEMORY_BASIC_INFORMATION64 mbi = { 0 };
     size_t  bufsize = 1 * 1024 * 1024;  // 1 MB
@@ -181,7 +214,11 @@ size_t PatternSearch::SearchRemoteWhole( Process& remote, bool useWildcard, uint
 
     for (ptr_t memptr = native->minAddr(); memptr < native->maxAddr(); memptr = mbi.BaseAddress + mbi.RegionSize)
     {
-        if (remote.core().native()->VirtualQueryExT( memptr, &mbi ) != STATUS_SUCCESS)
+        auto status = remote.core().native()->VirtualQueryExT( memptr, &mbi );
+
+        if (status == STATUS_INVALID_PARAMETER || status == STATUS_ACCESS_DENIED)
+            break;
+        else if (status != STATUS_SUCCESS)
             continue;
 
         // Filter regions
@@ -200,9 +237,9 @@ size_t PatternSearch::SearchRemoteWhole( Process& remote, bool useWildcard, uint
             continue;
 
         if (useWildcard)
-            Search( buf, static_cast<size_t>(mbi.RegionSize), out, memptr );
-        else
             Search( wildcard, buf, static_cast<size_t>(mbi.RegionSize), out, memptr );
+        else
+            Search( buf, static_cast<size_t>(mbi.RegionSize), out, memptr );
     }
 
     VirtualFree( buf, 0, MEM_RELEASE );
