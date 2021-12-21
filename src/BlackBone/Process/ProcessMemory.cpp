@@ -29,6 +29,11 @@ call_result_t<MemBlock> ProcessMemory::Allocate( size_t size, DWORD protection /
     return MemBlock::Allocate( *this, size, desired, protection, own );
 }
 
+call_result_t<MemBlock> ProcessMemory::AllocateClosest( size_t size, DWORD protection /*= PAGE_EXECUTE_READWRITE*/, ptr_t desired /*= 0*/, bool own /*= true*/ )
+{
+    return MemBlock::AllocateClosest( *this, size, desired, protection, own );
+}
+
 /// <summary>
 /// Free memory
 /// </summary>
@@ -74,7 +79,11 @@ NTSTATUS ProcessMemory::Protect( ptr_t pAddr, size_t size, DWORD flProtect, DWOR
     if (pOld == nullptr)
         pOld = &junk;
 
-    return _core.native()->VirtualProtectExT( pAddr, size, CastProtection( flProtect, _core.DEP() ), pOld );
+    DWORD finalProt = flProtect;
+    if (_casting == MemProtectionCasting::useDep)
+        finalProt = CastProtection( flProtect, _core.DEP() );
+
+    return _core.native()->VirtualProtectExT( pAddr, size, finalProt, pOld );
 }
 
 /// <summary>

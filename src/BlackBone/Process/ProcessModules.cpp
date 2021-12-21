@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <type_traits>
+#include <iterator>
 
 #ifdef COMPILER_MSVC
 #include <mscoree.h>
@@ -135,7 +136,7 @@ ModuleDataPtr ProcessModules::GetModule(
 /// <returns>Module data. nullptr if not found</returns>
 ModuleDataPtr ProcessModules::GetMainModule()
 {
-    if (_proc.barrier().x86OS)
+    if (_proc.barrier().targetWow64)
     {
         _PEB32 peb = { 0 };
         if (_proc.core().peb32( &peb ) == 0)
