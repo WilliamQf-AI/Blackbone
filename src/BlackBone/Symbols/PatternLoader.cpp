@@ -77,7 +77,7 @@ void OSFillPatterns( std::unordered_map<ptr_t*, OffsetData>& patterns, SymbolDat
         patterns.emplace(&result.RtlInsertInvertedFunctionTable64, OffsetData{ "\x48\x8B\xC4\x48\x89\x58\x08\x48\x89\x68\x10\x48\x89\x70\x20\x57\x48\x83\xEC\x30\x83\x60\x18\x00", true, 0 });
 
         // RtlpInsertInvertedFunctionTableEntry64
-        patterns.emplace(&result.LdrpInvertedFunctionTable64, OffsetData{ "\x48\x89\x6C\x24\x18\x48\x89\x74\x24\x20\x57\x48\x83\xEC\x20\x8B\x0D\x7B\x5E\x0F\x00", true, 0 });
+        patterns.emplace(&result.LdrpInvertedFunctionTable64, OffsetData{ "\x8B\x0D\xAB\x61\x0F\x00", true, -1, -0xF, 2, 6 });
 
         // RtlInsertInvertedFunctionTable32
         patterns.emplace(&result.RtlInsertInvertedFunctionTable32, OffsetData{ "\x8B\xFF\x55\x8B\xEC\x83\xEC\x0C\x53\x56\x57\x8D\x45\xF8\x8B\xFA", false, 0 });
