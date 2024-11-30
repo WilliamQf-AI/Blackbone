@@ -69,7 +69,55 @@ void FindPattern( const ScanParams& scan32, const ScanParams& scan64, const Offs
 /// <param name="result">Result</param>
 void OSFillPatterns( std::unordered_map<ptr_t*, OffsetData>& patterns, SymbolData& result )
 {
-    if (IsWindows1121H2OrGreater())
+    if (IsWindows1124H2OrGreater()) {
+        // LdrpHandleTlsData64
+		patterns.emplace(&result.LdrpHandleTlsData64, OffsetData{ "\x4C\x8B\xDC\x49\x89\x5B\x10\x49\x89\x73\x18\x57\x41\x54\x41\x55\x41\x56\x41\x57\x48\x81\xEC\x00\x01\x00\x00", true, 0 });
+
+        // RtlInsertInvertedFunctionTable64
+        patterns.emplace(&result.RtlInsertInvertedFunctionTable64, OffsetData{ "\x48\x8B\xC4\x48\x89\x58\x08\x48\x89\x68\x10\x48\x89\x70\x20\x57\x48\x83\xEC\x30\x83\x60\x18\x00", true, 0 });
+
+        // RtlpInsertInvertedFunctionTableEntry64
+        patterns.emplace(&result.LdrpInvertedFunctionTable64, OffsetData{ "\x8B\x0D\xAB\x61\x0F\x00", true, -1, -0xF, 2, 6 });
+
+        // RtlInsertInvertedFunctionTable32
+        patterns.emplace(&result.RtlInsertInvertedFunctionTable32, OffsetData{ "\x8B\xFF\x55\x8B\xEC\x83\xEC\x0C\x53\x56\x57\x8D\x45\xF8\x8B\xFA", false, 0 });
+
+        // RtlpInsertInvertedFunctionTableEntry32 - look for  "mov     eax, ds:_LdrpInvertedFunctionTables"
+        // 33 F6 46 3B C6
+        patterns.emplace(&result.LdrpInvertedFunctionTable32, OffsetData{ "\x33\xF6\x46\x3B\xC6", false, -1, -0x1B });
+
+        // LdrpHandleTlsData32
+        patterns.emplace(&result.LdrpHandleTlsData32, OffsetData{ "\x8B\x4D\xB8\x33\xD2", false, 0x42 });
+
+        // LdrProtectMrdata
+        // 75 20 85 f6 75 35
+        patterns.emplace(&result.LdrProtectMrdata, OffsetData{ "\x75\x20\x85\xf6\x75\x35", false, 0x1d });
+    }
+    else if (IsWindows1123H2OrGreater()) {
+		// LdrpHandleTlsData64
+        patterns.emplace(&result.LdrpHandleTlsData64, OffsetData{ "\x48\x89\x5C\x24\x10\x48\x89\x74\x24\x18\x48\x89\x7C\x24\x20\x41\x55", true, 0 });
+
+        // RtlInsertInvertedFunctionTable64
+        patterns.emplace(&result.RtlInsertInvertedFunctionTable64, OffsetData{ "\x48\x89\x5C\x24\x08\x57\x48\x83\xEC\x30\x8B\xDA", true, 0 });
+
+        // RtlpInsertInvertedFunctionTableEntry64
+        patterns.emplace(&result.LdrpInvertedFunctionTable64, OffsetData{ "\x48\x8B\xC4\x48\x89\x58\x08\x48\x89\x68\x10\x48\x89\x70\x18\x48\x89\x78\x20\x41\x56\x48\x83\xEC\x20\x8B\x05\x2D\xF3\x16\x00", true, 0 });
+
+        // RtlInsertInvertedFunctionTable32
+        patterns.emplace(&result.RtlInsertInvertedFunctionTable32, OffsetData{ "\x83\xEC\x0C\x53\x56\x57\x8D\x45\xF8\x8B\xFA", false, 0 });
+
+        // RtlpInsertInvertedFunctionTableEntry32 - look for  "mov     eax, ds:_LdrpInvertedFunctionTables"
+        // 33 F6 46 3B C6
+        patterns.emplace(&result.LdrpInvertedFunctionTable32, OffsetData{ "\x33\xF6\x46\x3B\xC6", false, -1, -0x1B });
+
+        // LdrpHandleTlsData32
+        patterns.emplace(&result.LdrpHandleTlsData32, OffsetData{ "\x33\xF6\x85\xC0\x79\x03", false, 0x42 });
+
+        // LdrProtectMrdata
+        // 75 20 85 f6 75 35
+        patterns.emplace(&result.LdrProtectMrdata, OffsetData{ "\x75\x20\x85\xf6\x75\x35", false, 0x1d });
+    }
+    else if (IsWindows1121H2OrGreater())
     {
         // LdrpHandleTlsData64
         // 41 55 41 56 41 57 48 81 EC F0 00 00
